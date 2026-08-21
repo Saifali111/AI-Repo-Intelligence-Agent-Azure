@@ -1,0 +1,29 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python virtual environment & cache
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# IDE / OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Temporary directories
+devpulse_repo_*
+tmp/
+
+# Private notes & interview prep
+INTERVIEW_PREP_GUIDE.md
+*interview*
+*INTERVIEW*
+

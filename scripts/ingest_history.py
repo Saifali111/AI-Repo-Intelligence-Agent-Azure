@@ -1,17 +1,15 @@
 """
-Step 2: Seed historical GitHub Issues and PRs into Azure AI Search.
+Step 2: Seed historical GitHub Issues into Azure AI Search, with embeddings.
 
 Run:
     python3 -m scripts.ingest_history
 
 What it does:
   - Paginates GitHub REST API for all issues (open + closed)
-  - Uploads batches to devpulse-issues-index
-  - Paginates GitHub PRs and uploads to devpulse-prs-index
-  - Seeds devpulse-briefings-history with a starter briefing document
+  - Embeds each issue's title+body via Azure OpenAI (text-embedding-3-large)
+  - Uploads batches (text + vector) to devpulse-issues-index
 """
 
-import json
 import time
 import requests
 from azure.search.documents import SearchClient
@@ -20,12 +18,12 @@ from azure.core.credentials import AzureKeyCredential
 from config.settings import (
     GITHUB_TOKEN, DEFAULT_REPO,
     AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_KEY,
-    AZURE_SEARCH_ISSUES_INDEX, AZURE_SEARCH_HISTORY_INDEX,
-    AZURE_SEARCH_PRS_INDEX,
+    AZURE_SEARCH_ISSUES_INDEX,
 )
+from tools.search_tools import get_embeddings_batch
 
 HEADERS = {"Authorization": f"Bearer {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
-BATCH_SIZE = 50  # Azure AI Search upload batch limit
+BATCH_SIZE = 50  # Azure AI Search upload batch limit; also our embedding batch size
 
 
 def get_search_client(index_name: str) -> SearchClient:
@@ -66,11 +64,12 @@ def fetch_github_issues(repo: str, max_pages: int = 50) -> list[dict]:
 
 
 def shape_issue_document(issue: dict) -> dict:
-    """Converts raw GitHub API issue to search index document."""
+    """Converts raw GitHub API issue to search index document (text fields only —
+    content_vector is attached separately, per upload batch, in ingest_issues())."""
     labels = ",".join([l.get("name", "") for l in issue.get("labels", [])])
     body = issue.get("body") or ""
     title = issue.get("title", "")
-    # Combined content field for full-text search
+    # Combined content field for full-text search AND the text we embed
     content = f"{title}\n\n{body[:2000]}"
     return {
         "id": str(issue["id"]),
@@ -97,118 +96,24 @@ def ingest_issues(repo: str):
     client = get_search_client(AZURE_SEARCH_ISSUES_INDEX)
     docs = [shape_issue_document(i) for i in issues]
 
-    # Upload in batches
+    # Upload in batches — embed each batch's `content` right before uploading,
+    # so one embeddings API call covers up to BATCH_SIZE issues at once
+    # instead of one call per issue.
     for i in range(0, len(docs), BATCH_SIZE):
         batch = docs[i:i + BATCH_SIZE]
+
+        texts = [d["content"] for d in batch]
+        print(f"  [Issues] Embedding batch {i // BATCH_SIZE + 1} ({len(texts)} issues)...")
+        vectors = get_embeddings_batch(texts)
+
+        for doc, vector in zip(batch, vectors):
+            doc["content_vector"] = vector
+
         result = client.upload_documents(documents=batch)
         succeeded = sum(1 for r in result if r.succeeded)
         print(f"  [Issues] Uploaded batch {i // BATCH_SIZE + 1}: {succeeded}/{len(batch)} succeeded.")
 
     print(f"  ✅ Issues ingestion complete. Total: {len(docs)} documents.")
-
-
-# ─────────────────────────────────────────────────────────
-# Ingest PRs
-# ─────────────────────────────────────────────────────────
-
-def fetch_github_prs(repo: str, max_pages: int = 5) -> list[dict]:
-    """Paginates GitHub PRs API (open + closed)."""
-    all_prs = []
-    for page in range(1, max_pages + 1):
-        url = f"https://api.github.com/repos/{repo}/pulls"
-        params = {"state": "all", "per_page": 100, "page": page}
-        resp = requests.get(url, headers=HEADERS, params=params)
-        if resp.status_code != 200:
-            print(f"  [PRs] HTTP {resp.status_code} on page {page}. Stopping.")
-            break
-        data = resp.json()
-        if not data:
-            break
-        all_prs.extend(data)
-        print(f"  [PRs] Page {page}: fetched {len(data)} PRs (total: {len(all_prs)})")
-        time.sleep(0.5)
-    return all_prs
-
-
-def shape_pr_document(pr: dict) -> dict:
-    """Converts raw GitHub PR to search index document."""
-    body = pr.get("body") or ""
-    title = pr.get("title", "")
-    content = f"{title}\n\n{body[:2000]}"
-    changed_files_str = json.dumps(pr.get("changed_files", []))
-    return {
-        "id": str(pr["id"]),
-        "pr_number": pr.get("number", 0),
-        "title": title,
-        "body": body[:3000],
-        "content": content,
-        "state": pr.get("state", ""),
-        "author": pr.get("user", {}).get("login", ""),
-        "merged": pr.get("merged_at") is not None,
-        "created_at": pr.get("created_at", ""),
-        "merged_at": pr.get("merged_at") or "",
-        "changed_files": changed_files_str,
-    }
-
-
-def ingest_prs(repo: str):
-    print(f"\n📥 [PRs] Starting ingestion for repo: {repo}")
-    prs = fetch_github_prs(repo)
-    if not prs:
-        print("  No PRs fetched.")
-        return
-
-    client = get_search_client(AZURE_SEARCH_PRS_INDEX)
-    docs = [shape_pr_document(p) for p in prs]
-
-    for i in range(0, len(docs), BATCH_SIZE):
-        batch = docs[i:i + BATCH_SIZE]
-        result = client.upload_documents(documents=batch)
-        succeeded = sum(1 for r in result if r.succeeded)
-        print(f"  [PRs] Uploaded batch {i // BATCH_SIZE + 1}: {succeeded}/{len(batch)} succeeded.")
-
-    print(f"  ✅ PRs ingestion complete. Total: {len(docs)} documents.")
-
-
-# ─────────────────────────────────────────────────────────
-# Seed Briefings History (starter docs)
-# ─────────────────────────────────────────────────────────
-
-STARTER_BRIEFINGS = [
-    {
-        "id": "briefing-001",
-        "title": "App Router Focus/Blur Bug — Recurring Pattern",
-        "content": (
-            "Issue #81204 was a focus/blur regression in the Next.js App Router introduced in v13.4. "
-            "Root cause: handleFocusBlur in app-router.tsx was not properly checking event.target before "
-            "invoking router state transitions. Fixed by adding a null-guard on event.target (PR #81890). "
-            "This same pattern resurfaced in Issue #96050 — check router.ts scroll/focus handlers first."
-        ),
-        "date": "2024-01-15",
-        "issue_refs": "#81204,#96050",
-        "author": "devpulse-system",
-    },
-    {
-        "id": "briefing-002",
-        "title": "Middleware Auth Token Expiry — Known Issue",
-        "content": (
-            "Issue #88312 documented a recurring problem where middleware JWT validation silently fails "
-            "on token expiry without returning a 401, causing downstream components to receive undefined user. "
-            "Resolution: add explicit token expiry check in middleware.ts before calling next(). Resolved in v14.1."
-        ),
-        "date": "2024-03-20",
-        "issue_refs": "#88312",
-        "author": "devpulse-system",
-    },
-]
-
-
-def ingest_briefings():
-    print(f"\n📥 [Briefings] Seeding starter briefings history...")
-    client = get_search_client(AZURE_SEARCH_HISTORY_INDEX)
-    result = client.upload_documents(documents=STARTER_BRIEFINGS)
-    succeeded = sum(1 for r in result if r.succeeded)
-    print(f"  ✅ Briefings seeded: {succeeded}/{len(STARTER_BRIEFINGS)} documents.")
 
 
 # ─────────────────────────────────────────────────────────
@@ -224,9 +129,8 @@ def main():
         return
 
     ingest_issues(DEFAULT_REPO)
-    # NOTE: PR ingestion skipped — Free tier allows max 3 indexes.
-    # PR data is fetched live via fetch_live_pr_details() GitHub API tool.
-    ingest_briefings()
+    # NOTE: PR ingestion removed — Free tier allows max 3 indexes, and PRs
+    # are covered live via fetch_live_pr_details() instead.
 
     print("\n=== Ingestion Complete ===")
     print("Next step: python3 -m scripts.repo_indexer  (to index the codebase)")

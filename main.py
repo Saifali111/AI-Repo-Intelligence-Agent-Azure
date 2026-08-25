@@ -12,14 +12,23 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
 import os
+from azure.monitor.opentelemetry import configure_azure_monitor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from agents.agent_graph import run_devpulse_pipeline
+
+if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    configure_azure_monitor(
+        connection_string=os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    )
 
 app = FastAPI(
     title="DevPulse Maintainer Copilot",
     description="AI copilot for open-source maintainers — powered by Azure AI Foundry.",
     version="1.0.0",
 )
+
+FastAPIInstrumentor.instrument_app(app)
 
 # Mount static files (Web Chat UI)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

@@ -1,5 +1,7 @@
 import json
 import requests
+from opentelemetry import trace
+
 from config.azure_clients import get_agent_openai_client
 from config.settings import (
     AZURE_AI_AGENT_NAME,
@@ -9,70 +11,73 @@ from config.settings import (
 from tools.github_tools import (
     fetch_live_issue_and_comments,
     fetch_live_pr_details,
-    fetch_ci_build_logs
+    fetch_ci_build_logs,
 )
 from tools.search_tools import search_past_history, search_codebase
 
-TOOL_MAP = {
-    "fetch_live_issue_and_comments": fetch_live_issue_and_comments,
-    "fetch_live_pr_details":         fetch_live_pr_details,
-    "fetch_ci_build_logs":           fetch_ci_build_logs,
-    "search_past_history":           search_past_history,
-    "search_codebase":               search_codebase,
+tracer = trace.get_tracer("devpulse.assistant")
+
+AGENT_REFERENCE = {
+    "name": AZURE_AI_AGENT_NAME,
+    "type": "agent_reference",
 }
 
-AGENT_REFERENCE = {"name": AZURE_AI_AGENT_NAME, "type": "agent_reference"}
+TOOL_MAP = {
+    "fetch_live_issue_and_comments": fetch_live_issue_and_comments,
+    "fetch_live_pr_details": fetch_live_pr_details,
+    "fetch_ci_build_logs": fetch_ci_build_logs,
+    "search_past_history": search_past_history,
+    "search_codebase": search_codebase,
+}
 
 
 def screen_input_safety(text: str) -> bool:
     """
-    Pre-screens user input via Azure AI Content Safety API.
-    Returns True if input is safe, False if it should be blocked.
-    Falls through (returns True) if Content Safety is not configured.
+    Pre-screens user input with Azure AI Content Safety REST API.
+    Returns True if safe, False if flagged.
+    Fails open (returns True) if Content Safety is not configured.
     """
     if not AZURE_CONTENT_SAFETY_ENDPOINT or not AZURE_CONTENT_SAFETY_KEY:
         print("[ContentSafety] Not configured — skipping pre-screen.")
         return True
 
+    url = f"{AZURE_CONTENT_SAFETY_ENDPOINT.rstrip('/')}/contentsafety/text:analyze?api-version=2023-10-01"
+    headers = {
+        "Ocp-Apim-Subscription-Key": AZURE_CONTENT_SAFETY_KEY,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "text": text,
+        "categories": ["Hate", "SelfHarm", "Sexual", "Violence"],
+        "haltOnBlocklistHit": True,
+        "outputType": "FourSeverityLevels",
+    }
+
     try:
-        url = f"{AZURE_CONTENT_SAFETY_ENDPOINT.rstrip('/')}/contentsafety/text:analyze?api-version=2024-09-01"
-        headers = {
-            "Ocp-Apim-Subscription-Key": AZURE_CONTENT_SAFETY_KEY,
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "text": text[:10000],  # API max length
-            "categories": ["Hate", "Violence", "SelfHarm", "Sexual"],
-            "blocklistNames": [],
-            "outputType": "FourSeverityLevels",
-        }
-        resp = requests.post(url, headers=headers, json=payload, timeout=5)
-        resp.raise_for_status()
-        result = resp.json()
-
-        # Block if ANY category severity >= 2 (medium)
-        for cat in result.get("categoriesAnalysis", []):
-            if cat.get("severity", 0) >= 2:
-                print(f"[ContentSafety] BLOCKED — category '{cat['category']}' severity {cat['severity']}.")
-                return False
-
-        print("[ContentSafety] Input passed safety check.")
-        return True
-
+        res = requests.post(url, headers=headers, json=payload, timeout=5)
+        if res.status_code == 200:
+            analysis = res.json()
+            for cat_result in analysis.get("categoriesAnalysis", []):
+                if cat_result.get("severity", 0) >= 2:
+                    print(f"[ContentSafety] ⚠️ Input blocked by category: {cat_result.get('category')}")
+                    return False
+            return True
+        else:
+            print(f"[ContentSafety] API error {res.status_code}: {res.text}. Failing open.")
+            return True
     except Exception as e:
-        print(f"[ContentSafety] Screen failed (non-blocking): {e}")
-        return True  # Fail open — don't block on API errors
+        print(f"[ContentSafety] Check failed: {e}. Failing open.")
+        return True
 
 
 def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tuple[str, str]:
     """
-    Executes the Maintainer Assistant Agent via the Foundry Agent Service (Responses API).
-    Pre-screens input through Azure AI Content Safety before invoking the agent.
-    Returns (final_text, conversation_id).
+    Invokes the Maintainer Assistant Agent in Azure AI Foundry via the Responses API.
+    Handles the autonomous tool-calling loop and returns (final_response_text, conversation_id).
     """
-    print(f"[AssistantAgent] Processing input: '{user_input}'...")
+    print(f"[AssistantAgent] Processing input: '{user_input[:80]}...'")
 
-    # ── Step 0: Content Safety pre-screen ──────────────────────────────────
+    # ── Step 0: Input Safety Screen ──────────────────────────────────────────
     if not screen_input_safety(user_input):
         return (
             "⚠️ Your query was flagged by the content safety filter and cannot be processed. "
@@ -103,7 +108,7 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
     )
 
     # ── Step 4: Autonomous multi-step tool execution loop ──────────────────
-    max_steps = 3
+    max_steps = 6
     step = 0
 
     while step < max_steps:
@@ -116,26 +121,39 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
 
         tool_outputs = []
         for call in function_calls:
-            fn_name = call.name
-            fn_args = json.loads(call.arguments)
-            print(f"[ToolCalling] → '{fn_name}' with args {fn_args}")
+            call_id = getattr(call, "call_id", None) or getattr(call, "id", None)
+            if not call_id and isinstance(call, dict):
+                call_id = call.get("call_id") or call.get("id")
 
-            tool_fn = TOOL_MAP.get(fn_name)
+            fn_name = getattr(call, "name", None) or (call.get("name") if isinstance(call, dict) else "")
+            raw_args = getattr(call, "arguments", None) or (call.get("arguments") if isinstance(call, dict) else "{}")
+
             try:
-                output = (
-                    tool_fn(**fn_args)
-                    if tool_fn
-                    else json.dumps({"error": f"Tool '{fn_name}' not found in TOOL_MAP"})
-                )
+                fn_args = json.loads(raw_args) if isinstance(raw_args, str) and raw_args.strip() else (raw_args or {})
+            except Exception:
+                fn_args = {}
+
+            print(f"[ToolCalling] → '{fn_name}' (ID: {call_id}) with args {fn_args}")
+            tool_fn = TOOL_MAP.get(fn_name)
+
+            output = ""
+            try:
+                with tracer.start_as_current_span(f"tool:{fn_name}") as span:
+                    span.set_attribute("tool.name", fn_name)
+                    span.set_attribute("tool.arguments", str(fn_args)[:200])
+
+                    if tool_fn:
+                        output = tool_fn(**fn_args)
+                    else:
+                        output = json.dumps({"error": f"Tool '{fn_name}' not found in TOOL_MAP"})
             except Exception as tool_err:
-                # Always return an output — a missing output causes Responses API 400
                 output = json.dumps({"error": f"Tool '{fn_name}' raised an exception: {str(tool_err)}"})
                 print(f"[ToolCalling] ❌ '{fn_name}' failed: {tool_err}")
 
             tool_outputs.append({
-                "type":    "function_call_output",
-                "call_id": call.call_id,
-                "output":  str(output),   # Always a string — never None
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": str(output),
             })
 
         response = client.responses.create(
@@ -144,5 +162,13 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
             input=tool_outputs,
         )
 
+    # ── Step 5: Extract final text output ───────────────────────────────────
     final_text = response.output_text or ""
+    if not final_text and hasattr(response, "output"):
+        for item in response.output:
+            if getattr(item, "type", "") == "message":
+                for part in getattr(item, "content", []):
+                    if getattr(part, "type", "") == "text":
+                        final_text += getattr(part, "text", "")
+
     return final_text, conversation_id

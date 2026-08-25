@@ -31,7 +31,6 @@ AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT", "https://devpulse-sea
 AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY", "")
 AZURE_SEARCH_ISSUES_INDEX = os.getenv("AZURE_SEARCH_ISSUES_INDEX", "devpulse-issues-index")
 AZURE_SEARCH_PRS_INDEX = os.getenv("AZURE_SEARCH_PRS_INDEX", "devpulse-prs-index")
-AZURE_SEARCH_HISTORY_INDEX = os.getenv("AZURE_SEARCH_HISTORY_INDEX", "devpulse-briefings-history")
 AZURE_SEARCH_CODE_INDEX = os.getenv("AZURE_SEARCH_CODE_INDEX", "devpulse-codebase-index")
 
 # ==========================================
@@ -42,6 +41,9 @@ AZURE_STORAGE_CONTAINER_NAME = os.getenv("AZURE_STORAGE_CONTAINER_NAME", "devpul
 
 AZURE_CONTENT_SAFETY_ENDPOINT = os.getenv("AZURE_CONTENT_SAFETY_ENDPOINT", "")
 AZURE_CONTENT_SAFETY_KEY = os.getenv("AZURE_CONTENT_SAFETY_KEY", "")
+
+AZURE_AI_AGENT_NAME = os.getenv("AZURE_AI_AGENT_NAME", "assistant-agent")
+AZURE_AI_CRITIC_NAME = os.getenv("AZURE_AI_CRITIC_NAME", "critic-agent")
 
 # ==========================================
 # GitHub API Credentials

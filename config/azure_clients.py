@@ -7,7 +7,6 @@ from config.settings import (
     AZURE_SEARCH_KEY,
     AZURE_SEARCH_ISSUES_INDEX,
     AZURE_SEARCH_CODE_INDEX,
-    AZURE_SEARCH_HISTORY_INDEX
 )
 
 def get_azure_openai_client():
@@ -81,5 +80,4 @@ if __name__ == "__main__":
     print(f"OpenAI Endpoint: {AZURE_OPENAI_ENDPOINT}")
     print(f"Search Endpoint: {AZURE_SEARCH_ENDPOINT}")
     print(f"Issues Index: {AZURE_SEARCH_ISSUES_INDEX}")
-    print(f"History Index: {AZURE_SEARCH_HISTORY_INDEX}")
     print(f"Codebase Index: {AZURE_SEARCH_CODE_INDEX}")

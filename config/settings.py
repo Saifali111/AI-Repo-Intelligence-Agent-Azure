@@ -49,4 +49,4 @@ AZURE_AI_CRITIC_NAME = os.getenv("AZURE_AI_CRITIC_NAME", "critic-agent")
 # GitHub API Credentials
 # ==========================================
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-DEFAULT_REPO = os.getenv("DEFAULT_REPO", "vercel/next.js")
+DEFAULT_REPO = os.getenv("DEFAULT_REPO", "trpc/trpc")

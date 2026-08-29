@@ -1,0 +1,64 @@
+{
+  "metrics": {
+    "avg_root_cause": 3.0,
+    "avg_solution": 2.8,
+    "hit_rate": 40.0
+  },
+  "cases": [
+    {
+      "pr_number": 4880,
+      "title": "feat(client): accept URL object param",
+      "duration": 38.5,
+      "root_cause_score": 2,
+      "solution_score": 2,
+      "localization_score": 1,
+      "file_hit": false,
+      "verdict": "FAIL",
+      "summary": "The agent correctly recognized the general symptom (URL objects being treated as strings) but did not identify the same root location the maintainers fixed: the approved PR centralizes URL acceptance/normalization in httpUtils.ts and updates tests. The agent's fixes target different link modules, omit the maintainers' normalization behavior (e.g., trimming trailing slashes via toString().replace(/\\/$/, '')), and the tests it proposed differ from the actual added test, so the proposed change is not aligned with the approved PR."
+    },
+    {
+      "pr_number": 7448,
+      "title": "fix(upgrade): clear the query cache on e",
+      "duration": 23.6,
+      "root_cause_score": 2,
+      "solution_score": 2,
+      "localization_score": 1,
+      "file_hit": false,
+      "verdict": "FAIL",
+      "summary": "The agent correctly recognized a persistent query-result cache as the general source of flakiness but mislocated the cause and scope: the approved PR fixed module-scoped test harness state by clearing the test QueryClient on every fixture render (and adjusted a fixture import), whereas the agent proposed adding a clearQueryCache API to the app-dir TRPC client implementation. That proposed change is not the change applied in the merged PR, so the agent's fix and targeted files do not match the approved resolution."
+    },
+    {
+      "pr_number": 7390,
+      "title": "fix(client): abort JSONL stream on httpB",
+      "duration": 27.8,
+      "root_cause_score": 5,
+      "solution_score": 4,
+      "localization_score": 5,
+      "file_hit": true,
+      "verdict": "PASS",
+      "summary": "The agent correctly identified the root cause (cleanup never called AbortController.abort()) and proposed the essential fix to abort the controller on unsubscribe. The proposed fix is functionally consistent with the approved PR, but it omitted the nuanced signal-racing used in the human patch (raceAbortSignals with the incoming op.signal) and other small integration details the PR included. File localization was accurate (packages/client/src/links/httpBatchStreamLink.ts) and the agent also suggested appropriate tests."
+    },
+    {
+      "pr_number": 7411,
+      "title": "feat(openapi): Add server url support",
+      "duration": 45.7,
+      "root_cause_score": 1,
+      "solution_score": 1,
+      "localization_score": 1,
+      "file_hit": false,
+      "verdict": "FAIL",
+      "summary": "I cannot compare the AI agent's diagnosis and proposed code changes because the agent's output was not provided. Scores are set to the minimum and the verdict is FAIL; please supply the agent's generated diagnosis and code fix so I can perform a proper evaluation against the approved PR."
+    },
+    {
+      "pr_number": 7370,
+      "title": "fix(tanstack-react-query): add prefix su",
+      "duration": 32.7,
+      "root_cause_score": 5,
+      "solution_score": 5,
+      "localization_score": 5,
+      "file_hit": true,
+      "verdict": "PASS",
+      "summary": "The agent correctly identified that the proxy-level keyPrefix was not being applied to mutation keys and recommended falling back to the proxy prefix when opts.keyPrefix is undefined. Its proposed fix (add a prefix parameter to trpcMutationOptions, compute effectiveKeyPrefix = opts?.keyPrefix ?? proxyPrefix, and pass it into key generation) is functionally consistent with the approved PR, and it accurately located the affected files (createOptionsProxy.ts, mutationOptions.ts and the related tests)."
+    }
+  ]
+}

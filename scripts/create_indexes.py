@@ -95,7 +95,7 @@ def build_issues_index() -> SearchIndex:
 
 
 def build_codebase_index() -> SearchIndex:
-    """devpulse-codebase-index — AST-chunked source code with relational metadata."""
+    """devpulse-codebase-index — AST-chunked source code with vector embeddings."""
     fields = [
         SimpleField(name="id",                 type=SearchFieldDataType.String,  key=True, filterable=True),
         SearchableField(name="file_path",      type=SearchFieldDataType.String,  analyzer_name="keyword"),
@@ -109,12 +109,23 @@ def build_codebase_index() -> SearchIndex:
         SearchableField(name="content",        type=SearchFieldDataType.String,  analyzer_name="en.microsoft"),
         SimpleField(name="language",           type=SearchFieldDataType.String,  filterable=True),
         SimpleField(name="repo",               type=SearchFieldDataType.String,  filterable=True),
+        # 3072-dim vector field for semantic code search
+        SearchField(
+            name="content_vector",
+            type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+            searchable=True,
+            retrievable=True,
+            vector_search_dimensions=EMBEDDING_DIMENSIONS,
+            vector_search_profile_name=VECTOR_SEARCH_PROFILE_NAME,
+        ),
     ]
     return SearchIndex(
         name=AZURE_SEARCH_CODE_INDEX,
         fields=fields,
+        vector_search=get_vector_search_config(),
         cors_options=CorsOptions(allowed_origins=["*"])
     )
+
 
 
 
@@ -145,17 +156,26 @@ INDEXES = [
 
 
 def main():
-    print("=== DevPulse: Creating Azure AI Search Indexes ===\n")
+    print("=== DevPulse: Wiping & Recreating Clean Azure AI Search Indexes ===\n")
     client = get_index_client()
     for label, builder_fn in INDEXES:
         index_def = builder_fn()
-        print(f"[{label}] Creating '{index_def.name}'...")
+        print(f"[{label}] Resetting '{index_def.name}'...")
         try:
-            result = client.create_or_update_index(index_def)
-            print(f"  ✅ '{result.name}' ready — {len(result.fields)} fields.\n")
+            # 1. Delete old index (clears all old documents & embeddings to 0 MB)
+            try:
+                client.delete_index(index_def.name)
+                print(f"  🗑️ Deleted old '{index_def.name}'.")
+            except Exception:
+                pass  # Index didn't exist, continue
+
+            # 2. Create fresh empty index
+            result = client.create_index(index_def)
+            print(f"  ✅ Fresh '{result.name}' created — 0 MB used, {len(result.fields)} fields.\n")
         except Exception as e:
             print(f"  ❌ Failed: {e}\n")
     print("=== Done. Next: python3 -m scripts.ingest_history ===")
+
 
 
 if __name__ == "__main__":

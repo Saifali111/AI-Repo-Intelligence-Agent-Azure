@@ -121,7 +121,7 @@ def search_past_history(query: str) -> str:
             fields="content_vector",
         )
         results = search_client.search(
-            search_text=None,
+            search_text=query,
             vector_queries=[vector_query],
             select=["issue_number", "title", "state", "content", "content_vector"],
         )

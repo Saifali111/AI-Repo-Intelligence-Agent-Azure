@@ -38,7 +38,7 @@ def get_search_client(index_name: str) -> SearchClient:
 # Ingest Issues
 # ─────────────────────────────────────────────────────────
 
-def fetch_github_issues(repo: str, max_pages: int = 50) -> list[dict]:
+def fetch_github_issues(repo: str, max_pages: int = 3) -> list[dict]:
     """Paginates GitHub issues API (open + closed), returns raw list."""
     all_issues = []
     for page in range(1, max_pages + 1):

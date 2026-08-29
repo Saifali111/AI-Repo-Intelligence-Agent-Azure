@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
+from tools.search_tools import get_embeddings_batch
 
 from config.settings import (
     GITHUB_TOKEN, DEFAULT_REPO,
@@ -207,7 +208,7 @@ def walk_source_files(root_dir: str) -> list[str]:
 
 
 def main():
-    print("=== DevPulse: AST Codebase Indexer (Tree-sitter) ===")
+    print("=== DevPulse: AST Codebase Indexer with Vector Embeddings ===")
     print(f"Target repo: {DEFAULT_REPO}")
 
     if not AZURE_SEARCH_KEY:
@@ -232,17 +233,25 @@ def main():
 
         print(f"  Generated {len(all_docs)} AST semantic code units.")
 
-        # Upload in batches
+        # Upload in batches with 3072-dim vector embeddings
         client = get_search_client()
         for i in range(0, len(all_docs), BATCH_SIZE):
             batch = all_docs[i:i + BATCH_SIZE]
             batch_num = i // BATCH_SIZE + 1
+
+            # ── 1. Generate 3072-dim embeddings for this batch ──
+            contents = [doc["content"] for doc in batch]
+            embeddings = get_embeddings_batch(contents)
+            for doc, emb in zip(batch, embeddings):
+                doc["content_vector"] = emb
+
+            # ── 2. Upload to Azure AI Search with retry logic ──
             max_retries = 5
             for attempt in range(max_retries):
                 try:
                     result = client.upload_documents(documents=batch)
                     succeeded = sum(1 for r in result if r.succeeded)
-                    print(f"  Batch {batch_num}: {succeeded}/{len(batch)} uploaded.")
+                    print(f"  Batch {batch_num}: {succeeded}/{len(batch)} embedded & uploaded.")
                     time.sleep(0.6)  # Steady pace for Free Tier
                     break
                 except Exception as upload_err:
@@ -259,7 +268,7 @@ def main():
         shutil.rmtree(tmp_dir, ignore_errors=True)
         print("  Temp directory cleaned up.")
 
-    print("\n=== Done! Codebase is now indexed with full AST hierarchy. ===")
+    print("\n=== Done! Codebase is now indexed with AST hierarchy + 3072-dim vectors. ===")
 
 
 if __name__ == "__main__":

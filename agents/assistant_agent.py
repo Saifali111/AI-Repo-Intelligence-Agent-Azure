@@ -100,12 +100,24 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
         conversation_id = conversation.id
         print(f"[AssistantAgent] Created conversation: {conversation_id}")
 
-    # ── Step 3: Initial agent call ──────────────────────────────────────────
-    response = client.responses.create(
-        conversation=conversation_id,
-        extra_body={"agent_reference": AGENT_REFERENCE},
-        input=[{"role": "user", "content": user_input}],
-    )
+    # ── Step 3: Initial agent call (with auto-recovery for retries) ────────
+    try:
+        response = client.responses.create(
+            conversation=conversation_id,
+            extra_body={"agent_reference": AGENT_REFERENCE},
+            input=[{"role": "user", "content": user_input}],
+        )
+    except Exception as e:
+        # If conversation has a pending tool call from max_steps, start a fresh conversation
+        print(f"[AssistantAgent] Re-creating fresh conversation due to pending state...")
+        conversation = client.conversations.create()
+        conversation_id = conversation.id
+        response = client.responses.create(
+            conversation=conversation_id,
+            extra_body={"agent_reference": AGENT_REFERENCE},
+            input=[{"role": "user", "content": user_input}],
+        )
+
 
     # ── Step 4: Autonomous multi-step tool execution loop ──────────────────
     max_steps = 6

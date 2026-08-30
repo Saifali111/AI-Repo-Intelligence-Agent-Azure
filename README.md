@@ -46,9 +46,9 @@ flowchart TD
     end
 
     subgraph DataLayer ["5. Azure Data & Model Services"]
-        AISearch[("Azure AI Search<br/>• devpulse-issues-index<br/>• devpulse-prs-index<br/>• devpulse-codebase-index")]
+        AISearch[("Azure AI Search<br/>• devpulse-issues-index (Vector Memory)<br/>• devpulse-codebase-index (AST Codebase)")]
         AOAI["Azure OpenAI Service<br/>• text-embedding-3-large (3072-d)<br/>• gpt-4o / gpt-5 Reasoning"]
-        GHAPI["GitHub REST API<br/>(Target Repo: e.g., trpc/trpc)"]
+        GHAPI["GitHub REST API<br/>(Live PRs, Issues, CI Logs)"]
     end
 
     WebUI -->|"User Query (POST /chat)"| FastAPI
@@ -104,10 +104,10 @@ flowchart TD
 * **Safety Timeout Net**: Includes a 15-second ThreadPoolExecutor safety net to prevent agent hangs.
 
 ### 🧠 Semantic Memory & AST Codebase Indexing
-* **3 Dedicated Azure AI Search Indexes**:
-  * `devpulse-issues-index`: Historical GitHub issues and maintainer resolutions.
-  * `devpulse-prs-index`: Historical pull request summaries and review comments.
-  * `devpulse-codebase-index`: AST-parsed source code entities.
+* **Dedicated Azure AI Search Vector Indexes**:
+  * `devpulse-issues-index`: Historical GitHub issues with 3072-dimensional vector embeddings for semantic memory and past bug resolution retrieval.
+  * `devpulse-codebase-index`: AST-parsed source code entities for structural symbol, function, and line-level code localization.
+* **Live Dynamic Telemetry for PRs & CI**: Pull requests and CI build logs are retrieved on-demand in real time via GitHub REST APIs (`fetch_live_pr_details`, `fetch_ci_build_logs`) to guarantee live, zero-stale repository status.
 * **Tree-sitter AST Parser**: Extracts functions, classes, parent classes, called functions, line numbers, and code snippets from `.ts`, `.tsx`, `.js`, `.jsx`, and `.py` files.
 * **Exact Cosine Distance Re-Scoring**: Computes exact cosine similarity directly on vector embeddings and applies a strict `0.75` threshold to eliminate hallucinated historical precedents.
 

@@ -1,6 +1,6 @@
 # 🚨 DevPulse: AI Repository Intelligence (Azure Edition)
 
-An enterprise-grade, AI-powered maintainer copilot and repository intelligence system built on **Azure AI Foundry**, **Azure OpenAI (`gpt-4o` / `gpt-5` + `text-embedding-3-large`)**, **Azure AI Search**, and **FastAPI**. DevPulse automates GitHub repository triage, diagnoses complex issues, inspects pull requests, debugs CI build failures, and localizes bugs in source code using multi-agent ReAct orchestration and Tree-sitter AST indexing.
+An enterprise-grade, AI-powered maintainer copilot and repository intelligence system built on **Azure AI Foundry**, **Azure OpenAI **, **Azure AI Search**, and **FastAPI**. DevPulse automates GitHub repository triage, diagnoses complex issues, inspects pull requests, debugs CI build failures, and localizes bugs in source code using multi-agent orchestration and Tree-sitter AST indexing.
 
 ---
 
@@ -14,7 +14,7 @@ DevPulse acts as an autonomous engineering intelligence copilot that gathers rea
 * **Fetch real-time GitHub data**: Queries live issues, top discussion comments, PR diffs, and GitHub Actions CI workflow run error tracebacks.
 * **Semantic memory search**: Queries historical issue resolutions in Azure AI Search with 3072-dimensional vector embeddings (`text-embedding-3-large`) and exact cosine relevance scoring ($\ge 0.75$ threshold).
 * **AST Codebase localization**: Uses **Tree-sitter** to parse TypeScript, JavaScript, and Python into structural syntax trees (functions, classes, callers, line ranges) to pinpoint buggy source files.
-* **2-Agent collaborative loop**: Orchestrates an **Assistant ReAct Agent** with a dedicated **Critic & Guardrail Agent** in Azure AI Foundry that verifies reasoning, groundedness, and required diagnostic sections before delivery.
+* **2-Agent collaborative loop**: Orchestrates a **Tool-Augmented Maintainer Agent** with a dedicated **Critic & Guardrail Agent** in Azure AI Foundry that verifies reasoning, groundedness, and required diagnostic sections before delivery.
 * **Interactive Web Chat UI**: Delivers multi-turn maintainer assistance with conversation history, intent detection badges, and critic evaluation transparency.
 * **Enterprise safety & tracing**: Pre-screens queries via **Azure AI Content Safety** and logs distributed traces via **OpenTelemetry & Azure Application Insights**.
 
@@ -35,7 +35,7 @@ flowchart TD
     end
 
     subgraph AgentLayer ["3. Azure AI Foundry Multi-Agent Loop"]
-        Assistant["🔍 Maintainer Assistant Agent<br/><code>agents/assistant_agent.py</code><br/>• Responses API & Function Calling<br/>• Multi-turn Conversation Threads"]
+        Assistant["🔍 Maintainer Assistant Agent<br/><code>agents/assistant_agent.py</code><br/>• Responses API & Function Calling<br/>• Strict 3-Section Diagnostic Format<br/>• Multi-turn Conversation Threads"]
         Critic["🛡️ Critic & Guardrail Agent<br/><code>agents/critic_agent.py</code><br/>• Intent Classification<br/>• Schema Validation (CriticEvaluation)<br/>• Groundedness & Section Checker"]
         Assistant <-->|"Feedback & Retry Loop (Max 2)"| Critic
     end
@@ -93,9 +93,13 @@ flowchart TD
 
 ## 🤖 Key Features
 
-### 🔍 2-Agent ReAct Loop (Assistant + Critic)
-* **Maintainer Assistant Agent**: Operates as a tool-calling ReAct agent in Azure AI Foundry equipped with 5 specialized tools for live GitHub telemetry and vector memory.
-* **Critic & Guardrail Agent**: Automatically classifies intent (`ISSUE_ANALYSIS`, `PR_REVIEW`, `CI_BUILD_DEBUG`, `GENERAL_QUERY`) and evaluates drafts for evidence groundedness, safety, and required diagnostic sections.
+### 🔍 2-Agent Architecture & Strict Diagnostic Protocol
+* **Maintainer Assistant Agent**: A prompt-directed, tool-augmented copilot running in Azure AI Foundry. It is bound by strict formatting and grounding rules (must search codebase before proposing fixes, never hallucinate file paths, and output syntax-highlighted code).
+* **Strict 3-Section Response Protocol**:
+  1. **`1. Issue Explanation & Symptoms`**: 3–4 sentences explaining expected behavior, actual breakage, and observed real-world impact.
+  2. **`2. Code Location & Proposed Fix`**: Exact file path & function from AST search, root cause explanation, and clean TypeScript/TSX code fix.
+  3. **`3. Past History & Validation`**: Cited historical issues and 2–3 regression tests.
+* **Critic & Guardrail Agent**: Automatically classifies intent (`ISSUE_ANALYSIS`, `PR_REVIEW`, `CI_BUILD_DEBUG`, `GENERAL_QUERY`) and evaluates drafts for evidence groundedness, safety, and all 3 required sections.
 * **Context-Preserving Retry Loop**: If rejected, the critic's actionable feedback is prepended to the conversation thread, allowing the assistant to refine its diagnosis without losing prior context.
 * **Safety Timeout Net**: Includes a 15-second ThreadPoolExecutor safety net to prevent agent hangs.
 
@@ -141,7 +145,7 @@ flowchart TD
 devpulse/
 ├── agents/
 │   ├── agent_graph.py          # 2-agent loop orchestrator (Assistant + Critic validation & retry)
-│   ├── assistant_agent.py      # Maintainer Assistant ReAct agent (Foundry Responses API + Tool calling)
+│   ├── assistant_agent.py      # Maintainer Assistant agent (Foundry Responses API + Tool calling)
 │   └── critic_agent.py         # Critic & Guardrail agent (JSON schema validation & intent routing)
 ├── config/
 │   ├── azure_clients.py        # Azure OpenAI, Search, and AI Foundry client singletons

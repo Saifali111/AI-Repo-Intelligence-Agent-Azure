@@ -1,4 +1,4 @@
-# 🚨 DevPulse: AI Engineering Intelligence Agent (Azure Edition)
+# 🚨 DevPulse: AI Repository Intelligence (Azure Edition)
 
 An enterprise-grade, AI-powered maintainer copilot and repository intelligence system built on **Azure AI Foundry**, **Azure OpenAI (`gpt-4o` / `gpt-5` + `text-embedding-3-large`)**, **Azure AI Search**, and **FastAPI**. DevPulse automates GitHub repository triage, diagnoses complex issues, inspects pull requests, debugs CI build failures, and localizes bugs in source code using multi-agent ReAct orchestration and Tree-sitter AST indexing.
 

@@ -24,9 +24,8 @@ DevPulse acts as an autonomous engineering intelligence copilot that gathers rea
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer ["1. Client & API Layer"]
-        WebUI["Web Chat UI<br/><code>/static/index.html</code>"]
-        APIClient["REST API Client / Webhooks"]
+    subgraph ClientLayer ["1. Client Layer"]
+        WebUI["💻 Web Chat UI<br/><code>/static/index.html</code>"]
     end
 
     subgraph ServerLayer ["2. FastAPI Server & Guardrails"]
@@ -52,8 +51,7 @@ flowchart TD
         GHAPI["GitHub REST API<br/>(Target Repo: e.g., trpc/trpc)"]
     end
 
-    WebUI -->|"POST /chat"| FastAPI
-    APIClient -->|"POST /chat, /ingest"| FastAPI
+    WebUI -->|"User Query (POST /chat)"| FastAPI
     FastAPI --> OTel
     FastAPI --> CS
     CS -->|"Safe Query"| Assistant

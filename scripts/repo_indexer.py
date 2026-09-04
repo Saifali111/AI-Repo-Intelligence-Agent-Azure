@@ -1,9 +1,6 @@
 """
-Step 3: Clone a GitHub repo and index source code into devpulse-codebase-index
-using Tree-sitter AST parsing (capturing classes, methods, functions, callers, and imports).
-
-Run:
-    python3 -m scripts.repo_indexer
+Tree-sitter Codebase AST Indexer.
+Clones a target repository, parses source files into AST entities with Tree-sitter, and uploads embeddings to Azure AI Search.
 """
 
 import os
@@ -27,6 +24,7 @@ MAX_FILES = 1000
 
 
 def get_search_client() -> SearchClient:
+    """Initializes and returns SearchClient for the codebase index."""
     return SearchClient(
         endpoint=AZURE_SEARCH_ENDPOINT,
         index_name=AZURE_SEARCH_CODE_INDEX,
@@ -34,12 +32,8 @@ def get_search_client() -> SearchClient:
     )
 
 
-# ─────────────────────────────────────────────────────────
-# Tree-sitter AST Parsing Engine
-# ─────────────────────────────────────────────────────────
-
 def get_ast_parser(language: str):
-    """Initializes Tree-sitter parser for TypeScript, JavaScript, or Python."""
+    """Initializes the Tree-sitter parser for the given programming language."""
     try:
         from tree_sitter_languages import get_parser
         parser_name = "tsx" if language in ("typescript", "tsx") else language
@@ -50,7 +44,7 @@ def get_ast_parser(language: str):
 
 
 def extract_calls_from_node(node, source_bytes: bytes) -> set[str]:
-    """Recursively extracts function/method names invoked inside a node."""
+    """Recursively extracts function and method call names invoked inside an AST node."""
     calls = set()
     if node.type in ("call_expression", "call"):
         for child in node.children:
@@ -62,10 +56,7 @@ def extract_calls_from_node(node, source_bytes: bytes) -> set[str]:
 
 
 def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
-    """
-    Parses a source file into logical AST units (Classes, Functions, Methods)
-    with parent class context, line numbers, called functions, and imports.
-    """
+    """Parses a source file into structured AST code units including classes, functions, calls, and imports."""
     ext = Path(file_path).suffix.lower()
     lang_map = {
         ".ts": "typescript", ".tsx": "tsx",
@@ -89,7 +80,7 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
     tree = parser.parse(source_bytes)
     root = tree.root_node
 
-    # 1. Collect all top-level imports in the file
+    # Extract top-level imports
     imports = []
     for child in root.children:
         if child.type in ("import_statement", "import_from_statement", "import_declaration"):
@@ -101,7 +92,7 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
     def visit_node(node, current_class=""):
         node_type = node.type
 
-        # Track Class Definition
+        # Track class declaration
         if node_type in ("class_declaration", "class_definition"):
             class_name = ""
             for c in node.children:
@@ -109,12 +100,11 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
                     class_name = source_bytes[c.start_byte:c.end_byte].decode("utf-8", errors="ignore")
                     break
             
-            # Recurse into class children with parent class tracked
             for c in node.children:
                 visit_node(c, current_class=class_name or current_class)
             return
 
-        # Track Function / Method Definition
+        # Track function and method declarations
         is_function = node_type in (
             "function_declaration", "method_definition", "function_definition",
             "arrow_function", "generator_function_declaration"
@@ -122,7 +112,6 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
 
         if is_function:
             fn_name = ""
-            # Extract function/method name
             for c in node.children:
                 if c.type in ("identifier", "property_identifier"):
                     fn_name = source_bytes[c.start_byte:c.end_byte].decode("utf-8", errors="ignore")
@@ -132,11 +121,9 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
             end_line = node.end_point[0] + 1
             snippet = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="ignore").strip()
 
-            # Extract called functions inside this function
             called_fns = list(extract_calls_from_node(node, source_bytes))[:10]
             called_fns_str = ", ".join(called_fns)
 
-            # Build rich searchable context header
             hierarchy = f"[File: {file_path}]"
             if current_class:
                 hierarchy += f" [Class: {current_class}]"
@@ -161,7 +148,6 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
             })
             return
 
-        # Recurse into other nodes
         for c in node.children:
             visit_node(c, current_class)
 
@@ -169,11 +155,8 @@ def parse_file_with_ast(file_path: str, repo_name: str) -> list[dict]:
     return chunks
 
 
-# ─────────────────────────────────────────────────────────
-# Git Clone & Indexing Pipeline
-# ─────────────────────────────────────────────────────────
-
 def clone_repo(repo: str, target_dir: str):
+    """Clones a GitHub repository to a local temporary directory."""
     import subprocess
     clone_url = f"https://github.com/{repo}.git"
     if GITHUB_TOKEN:
@@ -190,8 +173,8 @@ def clone_repo(repo: str, target_dir: str):
 
 
 def walk_source_files(root_dir: str) -> list[str]:
+    """Discovers indexable source files while skipping non-code directories."""
     source_files = []
-    # Skip test/example clutter so we index the ACTUAL core codebase
     skip_dirs = {
         "node_modules", ".git", "__pycache__", ".next", "dist", "build", 
         "venv", ".venv", "examples", "test", "tests", "docs", "fixtures", 
@@ -208,6 +191,7 @@ def walk_source_files(root_dir: str) -> list[str]:
 
 
 def main():
+    """Runs repository cloning, AST extraction, embedding generation, and upload."""
     print("=== DevPulse: AST Codebase Indexer with Vector Embeddings ===")
     print(f"Target repo: {DEFAULT_REPO}")
 
@@ -233,26 +217,23 @@ def main():
 
         print(f"  Generated {len(all_docs)} AST semantic code units.")
 
-        # Upload in batches with 3072-dim vector embeddings
         client = get_search_client()
         for i in range(0, len(all_docs), BATCH_SIZE):
             batch = all_docs[i:i + BATCH_SIZE]
             batch_num = i // BATCH_SIZE + 1
 
-            # ── 1. Generate 3072-dim embeddings for this batch ──
             contents = [doc["content"] for doc in batch]
             embeddings = get_embeddings_batch(contents)
             for doc, emb in zip(batch, embeddings):
                 doc["content_vector"] = emb
 
-            # ── 2. Upload to Azure AI Search with retry logic ──
             max_retries = 5
             for attempt in range(max_retries):
                 try:
                     result = client.upload_documents(documents=batch)
                     succeeded = sum(1 for r in result if r.succeeded)
                     print(f"  Batch {batch_num}: {succeeded}/{len(batch)} embedded & uploaded.")
-                    time.sleep(0.6)  # Steady pace for Free Tier
+                    time.sleep(0.6)
                     break
                 except Exception as upload_err:
                     err_msg = str(upload_err).lower()
@@ -268,7 +249,7 @@ def main():
         shutil.rmtree(tmp_dir, ignore_errors=True)
         print("  Temp directory cleaned up.")
 
-    print("\n=== Done! Codebase is now indexed with AST hierarchy + 3072-dim vectors. ===")
+    print("\n=== AST Codebase Indexing Complete ===")
 
 
 if __name__ == "__main__":

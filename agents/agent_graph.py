@@ -1,19 +1,15 @@
+"""
+DevPulse Agent Pipeline Orchestrator.
+Coordinates the Assistant Agent generation and Critic Agent evaluation loop with retry feedback.
+"""
+
 import concurrent.futures
 from agents.assistant_agent import run_maintainer_assistant
 from agents.critic_agent import evaluate_draft_response, CriticEvaluation
 
 
 def run_devpulse_pipeline(user_input: str, conversation_id: str = None, max_retries: int = 2) -> dict:
-    """
-    Orchestrates the 2-agent loop:
-    1. Maintainer Assistant Agent generates draft response (Foundry Agent Service / Responses API).
-    2. Critic & Guardrail Agent evaluates draft based on query intent.
-    3. If approved -> Returns final response and conversation_id.
-    4. If rejected -> Retries Assistant with Critic feedback (up to max_retries),
-       reusing the same conversation so the agent has full context.
-
-    Returns dict: { "response", "conversation_id", "evaluation", "retries_used" }
-    """
+    """Orchestrates the Assistant generation and Critic evaluation loop."""
     print(f"\n🚀 [DevPulsePipeline] Processing query: '{user_input}'")
 
     current_input = user_input
@@ -22,13 +18,13 @@ def run_devpulse_pipeline(user_input: str, conversation_id: str = None, max_retr
     evaluation = None
 
     while retries <= max_retries:
-        # ── Step 1: Run Assistant Agent ────────────────────────────────────
+        # Generate draft response via Assistant Agent
         draft_text, conversation_id = run_maintainer_assistant(
             user_input=current_input,
             conversation_id=conversation_id
         )
 
-        # ── Step 2: Run Critic (with 15s timeout safety net) ──────────────
+        # Validate draft response via Critic Agent with timeout protection
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(evaluate_draft_response, draft_text, user_input)
@@ -44,7 +40,7 @@ def run_devpulse_pipeline(user_input: str, conversation_id: str = None, max_retr
 
         print(f"[Critic] Intent={evaluation.intent.value} | Approved={evaluation.approved} | Attempt {retries + 1}/{max_retries + 1}")
 
-        # ── Step 3: Return if approved ─────────────────────────────────────
+        # Return validated response on approval
         if evaluation.approved:
             print(f"✅ [DevPulsePipeline] Approved on attempt {retries + 1}.")
             return {
@@ -54,7 +50,7 @@ def run_devpulse_pipeline(user_input: str, conversation_id: str = None, max_retr
                 "retries_used": retries
             }
 
-        # ── Step 4: Retry with critic feedback ────────────────────────────
+        # Retry with Critic feedback if rejected
         retries += 1
         if retries <= max_retries:
             print(f"⚠️ [DevPulsePipeline] Rejected. Retrying ({retries}/{max_retries}). Feedback: {evaluation.feedback}")

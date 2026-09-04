@@ -1,13 +1,6 @@
 """
-Step 2: Seed historical GitHub Issues into Azure AI Search, with embeddings.
-
-Run:
-    python3 -m scripts.ingest_history
-
-What it does:
-  - Paginates GitHub REST API for all issues (open + closed)
-  - Embeds each issue's title+body via Azure OpenAI (text-embedding-3-large)
-  - Uploads batches (text + vector) to devpulse-issues-index
+GitHub Issue Ingestion Pipeline.
+Fetches repository issues from GitHub, generates dense vector embeddings, and uploads them to Azure AI Search.
 """
 
 import time
@@ -23,10 +16,11 @@ from config.settings import (
 from tools.search_tools import get_embeddings_batch
 
 HEADERS = {"Authorization": f"Bearer {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
-BATCH_SIZE = 50  # Azure AI Search upload batch limit; also our embedding batch size
+BATCH_SIZE = 50
 
 
 def get_search_client(index_name: str) -> SearchClient:
+    """Initializes and returns the SearchClient for document uploads."""
     return SearchClient(
         endpoint=AZURE_SEARCH_ENDPOINT,
         index_name=index_name,
@@ -34,12 +28,8 @@ def get_search_client(index_name: str) -> SearchClient:
     )
 
 
-# ─────────────────────────────────────────────────────────
-# Ingest Issues
-# ─────────────────────────────────────────────────────────
-
 def fetch_github_issues(repo: str, max_pages: int = 3) -> list[dict]:
-    """Paginates GitHub issues API (open + closed), returns raw list."""
+    """Fetches paginated issues from the GitHub REST API, excluding pull requests."""
     all_issues = []
     for page in range(1, max_pages + 1):
         url = f"https://api.github.com/repos/{repo}/issues"
@@ -51,25 +41,21 @@ def fetch_github_issues(repo: str, max_pages: int = 3) -> list[dict]:
         data = resp.json()
         if not data:
             break
-        # Exclude PRs — GitHub issues API returns both issues and PRs
         issues_only = [i for i in data if "pull_request" not in i]
         all_issues.extend(issues_only)
         print(f"  [Issues] Page {page}: fetched {len(issues_only)} issues (total so far: {len(all_issues)})")
-        # If the page returned fewer than 100 items, we've hit the last page
         if len(data) < 100:
             print(f"  [Issues] Last page reached at page {page}.")
             break
-        time.sleep(0.8)  # stay within GitHub's 5000 req/hr rate limit
+        time.sleep(0.8)
     return all_issues
 
 
 def shape_issue_document(issue: dict) -> dict:
-    """Converts raw GitHub API issue to search index document (text fields only —
-    content_vector is attached separately, per upload batch, in ingest_issues())."""
+    """Formats a raw GitHub issue dictionary into the search index document structure."""
     labels = ",".join([l.get("name", "") for l in issue.get("labels", [])])
     body = issue.get("body") or ""
     title = issue.get("title", "")
-    # Combined content field for full-text search AND the text we embed
     content = f"{title}\n\n{body[:2000]}"
     return {
         "id": str(issue["id"]),
@@ -82,11 +68,12 @@ def shape_issue_document(issue: dict) -> dict:
         "labels": labels,
         "created_at": issue.get("created_at", ""),
         "closed_at": issue.get("closed_at") or "",
-        "resolution_summary": "",  # Can be enriched later
+        "resolution_summary": "",
     }
 
 
 def ingest_issues(repo: str):
+    """Fetches, embeds, and uploads issues in batches to Azure AI Search."""
     print(f"\n📥 [Issues] Starting ingestion for repo: {repo}")
     issues = fetch_github_issues(repo)
     if not issues:
@@ -96,9 +83,6 @@ def ingest_issues(repo: str):
     client = get_search_client(AZURE_SEARCH_ISSUES_INDEX)
     docs = [shape_issue_document(i) for i in issues]
 
-    # Upload in batches — embed each batch's `content` right before uploading,
-    # so one embeddings API call covers up to BATCH_SIZE issues at once
-    # instead of one call per issue.
     for i in range(0, len(docs), BATCH_SIZE):
         batch = docs[i:i + BATCH_SIZE]
 
@@ -116,11 +100,8 @@ def ingest_issues(repo: str):
     print(f"  ✅ Issues ingestion complete. Total: {len(docs)} documents.")
 
 
-# ─────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────
-
 def main():
+    """Runs the issue ingestion workflow for the default repository."""
     print("=== DevPulse: Historical Data Ingestion ===")
     print(f"Target repo: {DEFAULT_REPO}\n")
 
@@ -129,11 +110,7 @@ def main():
         return
 
     ingest_issues(DEFAULT_REPO)
-    # NOTE: PR ingestion removed — Free tier allows max 3 indexes, and PRs
-    # are covered live via fetch_live_pr_details() instead.
-
     print("\n=== Ingestion Complete ===")
-    print("Next step: python3 -m scripts.repo_indexer  (to index the codebase)")
 
 
 if __name__ == "__main__":

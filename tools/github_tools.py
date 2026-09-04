@@ -1,3 +1,8 @@
+"""
+GitHub Live Tools.
+Fetches real-time issue discussions, pull request metadata, and CI build status from the GitHub REST API.
+"""
+
 import requests
 import json
 from config.settings import GITHUB_TOKEN, DEFAULT_REPO
@@ -6,12 +11,9 @@ HEADERS = {"Authorization": f"Bearer {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
 
 
 def fetch_live_issue_and_comments(issue_number: int, repo: str = DEFAULT_REPO) -> str:
-    """
-    Fetches live details and top discussion comments for a specific GitHub issue.
-    """
+    """Fetches live issue details and discussion comments from GitHub."""
     print(f"[GitHubTool] Fetching Issue #{issue_number} from repository '{repo}'...")
     
-    # 1. Fetch main issue details
     issue_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
     response = requests.get(issue_url, headers=HEADERS)
     
@@ -20,35 +22,32 @@ def fetch_live_issue_and_comments(issue_number: int, repo: str = DEFAULT_REPO) -
     
     issue_data = response.json()
     
-    # 2. Fetch top discussion comments
     comments_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
     comments_response = requests.get(comments_url, headers=HEADERS)
     
     comments = []
     if comments_response.status_code == 200:
         raw_comments = comments_response.json()
-        for c in raw_comments[:5]:  # Extract top 5 discussion comments
+        for c in raw_comments[:5]:
             comments.append({
                 "author": c.get("user", {}).get("login"),
-                "body": c.get("body", "")[:300]  # Truncate long comments
+                "body": c.get("body", "")[:300]
             })
     
-    # 3. Assemble clean issue object
     result = {
         "issue_number": issue_data.get("number"),
         "title": issue_data.get("title"),
         "author": issue_data.get("user", {}).get("login"),
         "state": issue_data.get("state"),
-        "body": issue_data.get("body", "")[:1000],  # Main description
+        "body": issue_data.get("body", "")[:1000],
         "comments": comments
     }
     
     return json.dumps(result, indent=2)
 
+
 def fetch_live_pr_details(pr_number: int, repo: str = DEFAULT_REPO) -> str:
-    """
-    Fetches live details for a specific Pull Request (PR status, modified files, mergeability).
-    """
+    """Fetches live pull request metadata, diff summaries, and mergeability status."""
     print(f"[GitHubTool] Fetching PR #{pr_number} from repository '{repo}'...")
     pr_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
     response = requests.get(pr_url, headers=HEADERS)
@@ -58,7 +57,6 @@ def fetch_live_pr_details(pr_number: int, repo: str = DEFAULT_REPO) -> str:
     
     pr_data = response.json()
     
-    # Extract modified files summary
     files_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
     files_response = requests.get(files_url, headers=HEADERS)
     changed_files = []
@@ -84,13 +82,11 @@ def fetch_live_pr_details(pr_number: int, repo: str = DEFAULT_REPO) -> str:
 
     return json.dumps(result, indent=2)
 
+
 def fetch_ci_build_logs(pr_number: int, repo: str = DEFAULT_REPO) -> str:
-    """
-    Fetches GitHub Actions CI build run status and error tracebacks for a Pull Request.
-    """
+    """Fetches latest CI workflow run status and error logs for a pull request."""
     print(f"[GitHubTool] Fetching CI build status for PR #{pr_number} from repository '{repo}'...")
     
-    # 1. Fetch PR details to get branch name
     pr_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
     pr_resp = requests.get(pr_url, headers=HEADERS)
     if pr_resp.status_code != 200:
@@ -98,12 +94,10 @@ def fetch_ci_build_logs(pr_number: int, repo: str = DEFAULT_REPO) -> str:
     
     branch_name = pr_resp.json().get("head", {}).get("ref", "")
     
-    # 2. Fetch latest workflow runs for this branch
     runs_url = f"https://api.github.com/repos/{repo}/actions/runs?branch={branch_name}"
     runs_resp = requests.get(runs_url, headers=HEADERS)
     
     if runs_resp.status_code != 200 or not runs_resp.json().get("workflow_runs"):
-        # Dry-run fallback if branch has no public CI run recorded
         return json.dumps({
             "pr_number": pr_number,
             "status": "completed",
@@ -119,7 +113,7 @@ def fetch_ci_build_logs(pr_number: int, repo: str = DEFAULT_REPO) -> str:
         "pr_number": pr_number,
         "workflow_name": latest_run.get("name"),
         "status": latest_run.get("status"),
-        "conclusion": latest_run.get("conclusion"),  # "success" or "failure"
+        "conclusion": latest_run.get("conclusion"),
         "html_url": latest_run.get("html_url")
     }
     
@@ -128,6 +122,5 @@ def fetch_ci_build_logs(pr_number: int, repo: str = DEFAULT_REPO) -> str:
 
 if __name__ == "__main__":
     print("=== Testing GitHub Issue Tool ===")
-    # Test fetching a real public issue from vercel/next.js
     test_result = fetch_live_issue_and_comments(96050)
     print(test_result)

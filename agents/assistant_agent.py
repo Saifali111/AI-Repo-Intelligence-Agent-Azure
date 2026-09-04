@@ -1,3 +1,8 @@
+"""
+Maintainer Assistant Agent.
+Invokes the Azure AI Foundry assistant agent via the Responses API and executes custom function tools.
+"""
+
 import json
 import requests
 from opentelemetry import trace
@@ -32,11 +37,7 @@ TOOL_MAP = {
 
 
 def screen_input_safety(text: str) -> bool:
-    """
-    Pre-screens user input with Azure AI Content Safety REST API.
-    Returns True if safe, False if flagged.
-    Fails open (returns True) if Content Safety is not configured.
-    """
+    """Pre-screens user input with Azure AI Content Safety to filter harmful content."""
     if not AZURE_CONTENT_SAFETY_ENDPOINT or not AZURE_CONTENT_SAFETY_KEY:
         print("[ContentSafety] Not configured — skipping pre-screen.")
         return True
@@ -71,13 +72,10 @@ def screen_input_safety(text: str) -> bool:
 
 
 def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tuple[str, str]:
-    """
-    Invokes the Maintainer Assistant Agent in Azure AI Foundry via the Responses API.
-    Handles the autonomous tool-calling loop and returns (final_response_text, conversation_id).
-    """
+    """Runs the Assistant Agent in Azure AI Foundry and executes the tool-calling loop."""
     print(f"[AssistantAgent] Processing input: '{user_input[:80]}...'")
 
-    # ── Step 0: Input Safety Screen ──────────────────────────────────────────
+    # Pre-screen input safety
     if not screen_input_safety(user_input):
         return (
             "⚠️ Your query was flagged by the content safety filter and cannot be processed. "
@@ -85,7 +83,7 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
             conversation_id or "",
         )
 
-    # ── Step 1: Get Foundry client ──────────────────────────────────────────
+    # Initialize client
     client = get_agent_openai_client()
     if not client:
         raise RuntimeError(
@@ -94,13 +92,13 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
             f"'{AZURE_AI_AGENT_NAME}' exists in the Foundry portal."
         )
 
-    # ── Step 2: Create or reuse server-side conversation ───────────────────
+    # Create or reuse conversation thread
     if not conversation_id:
         conversation = client.conversations.create()
         conversation_id = conversation.id
         print(f"[AssistantAgent] Created conversation: {conversation_id}")
 
-    # ── Step 3: Initial agent call (with auto-recovery for retries) ────────
+    # Send initial user message
     try:
         response = client.responses.create(
             conversation=conversation_id,
@@ -108,7 +106,6 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
             input=[{"role": "user", "content": user_input}],
         )
     except Exception as e:
-        # If conversation has a pending tool call from max_steps, start a fresh conversation
         print(f"[AssistantAgent] Re-creating fresh conversation due to pending state...")
         conversation = client.conversations.create()
         conversation_id = conversation.id
@@ -118,8 +115,7 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
             input=[{"role": "user", "content": user_input}],
         )
 
-
-    # ── Step 4: Autonomous multi-step tool execution loop ──────────────────
+    # Multi-step tool execution loop
     max_steps = 6
     step = 0
 
@@ -174,7 +170,7 @@ def run_maintainer_assistant(user_input: str, conversation_id: str = None) -> tu
             input=tool_outputs,
         )
 
-    # ── Step 5: Extract final text output ───────────────────────────────────
+    # Extract response text
     final_text = response.output_text or ""
     if not final_text and hasattr(response, "output"):
         for item in response.output:

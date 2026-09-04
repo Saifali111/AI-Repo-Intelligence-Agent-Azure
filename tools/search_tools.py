@@ -1,3 +1,8 @@
+"""
+Azure AI Search Tools.
+Provides vector semantic search over historical repository issues and codebase AST entities.
+"""
+
 import json
 from azure.search.documents.models import VectorizedQuery
 from config.azure_clients import get_azure_search_client, get_azure_openai_client
@@ -7,32 +12,13 @@ from config.settings import (
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT
 )
 
-# text-embedding-3-large produces 3072-dimensional vectors by default.
-# Must match EMBEDDING_DIMENSIONS in scripts/create_indexes.py exactly, or
-# Azure AI Search will reject uploads with a dimension-mismatch error.
 EMBEDDING_DIMENSIONS = 3072
-
-# Minimum EXACT cosine similarity (not Azure's transformed @search.score --
-# see _cosine_similarity() below) for a past issue to count as "relevant."
-# Below this, search_past_history() reports no match rather than returning
-# a weak candidate the assistant might mistake for a real precedent.
 RELEVANCE_THRESHOLD = 0.75
-
-# How many approximate-nearest-neighbor candidates to pull from Azure before
-# re-filtering by exact cosine similarity. Kept larger than 1 so a good match
-# isn't lost to HNSW's approximation before we get to judge it precisely.
 CANDIDATE_POOL_SIZE = 8
 
 
 def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    """
-    Embeds a LIST of texts in a single Azure OpenAI API call.
-    Used at ingest time, where we're embedding many issues at once —
-    one call per batch instead of one call per document.
-    Returns a list of vectors in the same order as `texts`.
-    Falls back to mock (all-zero) vectors if the client isn't configured,
-    so ingestion can still be dry-run tested without live credentials.
-    """
+    """Generates dense vector embeddings for a list of texts using Azure OpenAI."""
     if not texts:
         return []
 
@@ -46,7 +32,6 @@ def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
             input=texts,
             model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
         )
-        # response.data is returned in the same order as the input list
         return [item.embedding for item in response.data]
     except Exception as e:
         print(f"[EmbeddingBatch] Failed to generate embeddings: {e}")
@@ -54,26 +39,12 @@ def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
 
 
 def get_query_embedding(query_text: str) -> list[float]:
-    """Generates a vector embedding for a single query string. Thin wrapper
-    around get_embeddings_batch() so single- and batch-embedding always stay
-    dimensionally consistent with each other."""
+    """Generates a dense vector embedding for a single search query string."""
     return get_embeddings_batch([query_text])[0]
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """
-    Exact cosine similarity between two vectors, computed directly rather
-    than relying on Azure AI Search's returned @search.score.
-
-    WHY: for vector queries with the cosine metric, Azure does NOT return
-    raw cosine similarity in @search.score. Per Microsoft's own docs, it
-    returns a transformed, monotonically-decreasing value:
-        @search.score = 1 / (1 + cosine_distance)   where cosine_distance = 1 - cosine_similarity
-    So a @search.score of 0.75 actually corresponds to a real cosine
-    similarity of ~0.667, not 0.75. Recomputing it ourselves means a
-    threshold of 0.75 here means literally that -- no mental conversion,
-    no ambiguity, and no dependency on undocumented score behavior.
-    """
+    """Calculates exact cosine similarity between two vector embeddings."""
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(y * y for y in b) ** 0.5
@@ -83,22 +54,11 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def search_past_history(query: str) -> str:
-    """
-    Semantic search over devpulse-issues-index: embeds the query, retrieves
-    an approximate-nearest-neighbor candidate pool from Azure, then re-scores
-    each candidate with exact cosine similarity and keeps only matches at or
-    above RELEVANCE_THRESHOLD (0.75).
-
-    If nothing clears the threshold, returns an explicit "no relevant match"
-    result rather than the closest-available-but-still-weak candidates --
-    the assistant should treat this as "no similar past issue," not as
-    missing data to guess at.
-    """
+    """Performs semantic vector search over historical repository issues with cosine threshold filtering."""
     print(f"[SearchTool] Searching past history for: '{query}'...")
     search_client = get_azure_search_client(AZURE_SEARCH_ISSUES_INDEX)
 
     if not search_client:
-        # Dry-run fallback response when Azure AI Search is not yet deployed
         return json.dumps({
             "status": "dry_run",
             "message": f"Simulated search for history matching '{query}'",
@@ -168,15 +128,11 @@ def search_past_history(query: str) -> str:
 
 
 def search_codebase(query: str) -> str:
-    """
-    Queries codebase-index to locate source code files and line numbers.
-    (Unchanged in this step -- GraphRAG-based rework is a separate step.)
-    """
+    """Searches the codebase index for matching files, classes, functions, and line numbers."""
     print(f"[SearchTool] Searching codebase for: '{query}'...")
     search_client = get_azure_search_client(AZURE_SEARCH_CODE_INDEX)
 
     if not search_client:
-        # Dry-run fallback response when Azure AI Search is not yet deployed
         return json.dumps({
             "status": "dry_run",
             "message": f"Simulated codebase search for '{query}'",

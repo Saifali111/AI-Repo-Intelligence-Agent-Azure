@@ -1,3 +1,8 @@
+"""
+Critic and Guardrail Agent.
+Validates draft responses against intent, safety, groundedness, and required section schemas.
+"""
+
 import json
 import re
 from enum import Enum
@@ -7,11 +12,12 @@ from config.settings import AZURE_AI_CRITIC_NAME
 from opentelemetry import trace
 
 CRITIC_AGENT_REFERENCE = {
-    "name": AZURE_AI_CRITIC_NAME,  # "critic-agent" in your Foundry portal
+    "name": AZURE_AI_CRITIC_NAME,
     "type": "agent_reference"
 }
 
 tracer = trace.get_tracer("devpulse.critic")
+
 
 class QueryIntent(str, Enum):
     ISSUE_ANALYSIS = "ISSUE_ANALYSIS"
@@ -30,9 +36,8 @@ class CriticEvaluation(BaseModel):
 
 
 def parse_critic_output(raw_text: str) -> CriticEvaluation:
-    """Safely extracts JSON evaluation from the critic agent's output text."""
+    """Parses and extracts structured CriticEvaluation JSON from agent output text."""
     try:
-        # Extract JSON substring if wrapped in markdown fences
         json_match = re.search(r"\{[\s\S]*\}", raw_text)
         if json_match:
             data = json.loads(json_match.group(0))
@@ -52,7 +57,6 @@ def parse_critic_output(raw_text: str) -> CriticEvaluation:
         )
     except Exception as e:
         print(f"[CriticAgent] Warning: Could not parse JSON from critic output: {e}. Raw: {raw_text[:120]}")
-        # Fallback to approve if parsing fails
         return CriticEvaluation(
             intent=QueryIntent.GENERAL_QUERY,
             is_safe=True,
@@ -64,10 +68,7 @@ def parse_critic_output(raw_text: str) -> CriticEvaluation:
 
 
 def evaluate_draft_response(draft_text: str, user_query: str = "") -> CriticEvaluation:
-    """
-    Executes the Critic Agent directly via the Foundry Agent Service (Responses API).
-    Reads the system instructions from your published 'critic-agent' in the portal.
-    """
+    """Evaluates assistant draft responses for safety, groundedness, and format compliance."""
     print(f"[CriticAgent] Evaluating draft response for query: '{user_query}' via portal '{AZURE_AI_CRITIC_NAME}'...")
     client = get_agent_openai_client()
 

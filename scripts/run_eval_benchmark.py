@@ -1,14 +1,8 @@
 """
-DevPulse: Batch Ground-Truth Evaluation Benchmark
-1. Auto-discovers N recent merged code PRs from GitHub (skipping docs/chores).
-2. Runs DevPulse on each issue/problem.
-3. Invokes Foundry's 'judge-agent' to score each diagnosis against real maintainer patches.
-4. Computes aggregate metrics: Root Cause Alignment, Solution Score, and File Hit Rate.
-5. Outputs a senior-level Markdown benchmark report table!
-
-Usage:
-    python3 -m scripts.run_eval_benchmark --count 5
+Ground-Truth Evaluation Benchmark.
+Evaluates DevPulse against merged GitHub pull requests using an Azure AI Foundry LLM-as-a-Judge.
 """
+
 import sys
 import re
 import json
@@ -29,7 +23,7 @@ JUDGE_AGENT_REFERENCE = {"name": "judge-agent", "type": "agent_reference"}
 
 
 def discover_benchmark_prs(repo: str, target_count: int = 5, max_pages: int = 10) -> list[dict]:
-    """Paginates GitHub and collects real merged PRs containing TypeScript/JavaScript code fixes."""
+    """Discovers closed merged code PRs with diffs and file patches for benchmarking."""
     print(f"\n🔍 [Discovery] Finding {target_count} merged code PRs from '{repo}'...")
     collected = []
 
@@ -55,7 +49,6 @@ def discover_benchmark_prs(repo: str, target_count: int = 5, max_pages: int = 10
 
             title = pr.get("title", "")
             title_lower = title.lower()
-            # Skip documentation, chores, and releases
             if title_lower.startswith(("docs", "chore", "ci", "build", "release", "repo:", "deps", "fix(deps)", "feat(deps)")):
                 continue
 
@@ -63,7 +56,6 @@ def discover_benchmark_prs(repo: str, target_count: int = 5, max_pages: int = 10
             match = re.search(r"(?:fix|fixes|close|closes|resolve|resolves)\s+(?:https?://github\.com/[^/]+/[^/]+/issues/|#)(\d+)", body, re.IGNORECASE)
             linked_issue = int(match.group(1)) if match else None
 
-            # Fetch modified files
             files_res = requests.get(pr.get("url") + "/files", headers=HEADERS)
             if files_res.status_code != 200:
                 continue
@@ -94,7 +86,7 @@ def discover_benchmark_prs(repo: str, target_count: int = 5, max_pages: int = 10
 
 
 def run_foundry_judge_agent(case: dict, agent_output: str) -> dict:
-    """Invokes Microsoft Foundry's 'judge-agent' via Responses API."""
+    """Invokes the Azure AI Foundry Judge Agent to evaluate diagnosis against ground truth."""
     client = get_agent_openai_client()
     if not client:
         return {"error": "Foundry agent client not configured."}
@@ -132,6 +124,7 @@ Compare the AI diagnosis and proposed code fix against the human maintainers' ap
 
 
 def main():
+    """Runs batch benchmark evaluation and outputs aggregate metrics."""
     parser = argparse.ArgumentParser(description="Run DevPulse LLM-as-a-Judge Evaluation Benchmark")
     parser.add_argument("--count", type=int, default=5, help="Number of PR test cases to evaluate (default: 5)")
     args = parser.parse_args()
@@ -142,7 +135,6 @@ def main():
     print(f"   Evaluation Judge:  Foundry 'judge-agent'")
     print(f"============================================================")
 
-    # 1. Discover PRs
     cases = discover_benchmark_prs(DEFAULT_REPO, target_count=args.count)
     if not cases:
         print("❌ No benchmark PRs found.")
@@ -150,7 +142,6 @@ def main():
 
     results = []
 
-    # 2. Run Benchmark Loop
     for i, case in enumerate(cases, 1):
         pr_num = case["pr_number"]
         gt_files = case["ground_truth_files"]
@@ -159,17 +150,14 @@ def main():
         print(f"\n[{i}/{len(cases)}] 🚀 Testing PR #{pr_num}: '{case['pr_title'][:60]}'")
         print(f"   Query: '{query}'")
 
-        # Run DevPulse
         t0 = time.time()
         pipeline_res = run_devpulse_pipeline(query)
         duration = round(time.time() - t0, 1)
         agent_resp = pipeline_res.get("response", "")
 
-        # Deterministic file check
         hits = [f for f in gt_files if f in agent_resp or f.split("/")[-1] in agent_resp]
         file_hit = len(hits) > 0
 
-        # Invoke Foundry Judge
         print(f"   ⚖️ Invoking 'judge-agent' in Microsoft Foundry...")
         judge_res = run_foundry_judge_agent(case, agent_resp)
 
@@ -192,14 +180,12 @@ def main():
             "summary": judge_res.get("judge_summary", "")
         })
 
-    # 3. Aggregate Statistics
     total = len(results)
     avg_rc = sum(r["root_cause_score"] for r in results) / total
     avg_sol = sum(r["solution_score"] for r in results) / total
     avg_loc = sum(r["localization_score"] for r in results) / total
     hit_rate = (sum(1 for r in results if r["file_hit"]) / total) * 100
 
-    # 4. Render Markdown Benchmark Table
     print("\n" + "=" * 80)
     print("🏆 DEVPULSE BENCHMARK EVALUATION SUMMARY")
     print("=" * 80)
@@ -217,7 +203,6 @@ def main():
     print(f"   • Deterministic File Hit Rate:  {hit_rate:.1f}%")
     print("=" * 80 + "\n")
 
-    # Save to JSON
     with open("benchmark_results.json", "w") as f:
         json.dump({"metrics": {"avg_root_cause": avg_rc, "avg_solution": avg_sol, "hit_rate": hit_rate}, "cases": results}, f, indent=2)
     print("💾 Benchmark results saved to 'benchmark_results.json'!\n")

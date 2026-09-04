@@ -1,8 +1,8 @@
 """
-Smart PR Evaluation with Foundry LLM-as-a-Judge:
-- Evaluates any specific PR: `python3 -m scripts.test_single_eval <PR_NUMBER>`
-- Or auto-picks the latest merged PR: `python3 -m scripts.test_single_eval`
+Single PR Ground-Truth Evaluator.
+Evaluates agent diagnoses on a single PR against merged code patches using Azure AI Foundry Judge Agent.
 """
+
 import sys
 import re
 import json
@@ -21,7 +21,7 @@ JUDGE_AGENT_REFERENCE = {"name": "judge-agent", "type": "agent_reference"}
 
 
 def fetch_latest_merged_pr():
-    """Auto-discovers the latest merged TypeScript/JavaScript code fix from GitHub."""
+    """Discovers the latest merged TypeScript or JavaScript code fix from GitHub."""
     print(f"[Eval] Auto-discovering latest merged code fixes in '{DEFAULT_REPO}'...")
     url = f"https://api.github.com/repos/{DEFAULT_REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=30"
     res = requests.get(url, headers=HEADERS)
@@ -32,7 +32,6 @@ def fetch_latest_merged_pr():
         if not pr.get("merged_at"):
             continue
         title = pr.get("title", "").lower()
-        # Skip docs, chores, and build script tweaks
         if title.startswith(("docs", "chore", "ci", "build", "release")):
             continue
 
@@ -43,9 +42,8 @@ def fetch_latest_merged_pr():
     raise RuntimeError("No merged code fixes found.")
 
 
-
 def fetch_target_pr(pr_number: int):
-    """Fetches details, files, and diffs for a specific PR."""
+    """Fetches details, modified files, and code diff patches for a specific PR."""
     print(f"[Eval] Fetching PR #{pr_number} from '{DEFAULT_REPO}'...")
     url = f"https://api.github.com/repos/{DEFAULT_REPO}/pulls/{pr_number}"
     res = requests.get(url, headers=HEADERS)
@@ -84,7 +82,7 @@ def fetch_target_pr(pr_number: int):
 
 
 def run_foundry_judge_agent(case: dict, agent_output: str) -> dict:
-    """Invokes 'judge-agent' in Microsoft Foundry via Responses API to score DevPulse."""
+    """Invokes Azure AI Foundry Judge Agent to evaluate diagnosis against human maintainer patches."""
     print("[Foundry-Judge] Invoking 'judge-agent' in Azure AI Foundry...")
     client = get_agent_openai_client()
     if not client:
@@ -123,6 +121,7 @@ Compare the AI diagnosis and proposed code fix against the human maintainers' ap
 
 
 def main():
+    """Runs single PR evaluation and prints judge scoring."""
     if len(sys.argv) > 1:
         target_pr_num = int(sys.argv[1])
         case = fetch_target_pr(target_pr_num)
@@ -137,7 +136,6 @@ def main():
     print(f"   • Files Modified in PR: {gt_files}")
     print("\n" + "=" * 60 + "\n")
 
-    # Query DevPulse
     query = f"Please tell me about issue #{case['linked_issue']}?" if case['linked_issue'] else f"Please diagnose: {case['pr_title']}"
     print(f"[DevPulse] Running agent pipeline for query: '{query}'...")
     pipeline_result = run_devpulse_pipeline(query)
@@ -149,11 +147,9 @@ def main():
     print(agent_response)
     print("=" * 60 + "\n")
 
-    # Deterministic File Check
     hits = [f for f in gt_files if f in agent_response or f.split("/")[-1] in agent_response]
     print(f"📁 Deterministic File Check: {'✅ Hit (' + str(hits) + ')' if hits else '⚠️ Miss'}")
 
-    # Foundry Judge Agent Evaluation
     judge_result = run_foundry_judge_agent(case, agent_response)
 
     print("\n" + "=" * 60)

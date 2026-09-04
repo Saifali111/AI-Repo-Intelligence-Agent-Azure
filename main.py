@@ -1,9 +1,6 @@
 """
-DevPulse FastAPI Server
-Serves the Web Chat UI and exposes the 2-agent pipeline via REST API.
-
-Run:
-    uvicorn main:app --reload --port 8000
+DevPulse FastAPI Server.
+Exposes REST API endpoints and serves the Web Chat UI for repository maintainer assistance.
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -24,25 +21,23 @@ if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
 
 app = FastAPI(
     title="DevPulse Maintainer Copilot",
-    description="AI copilot for open-source maintainers — powered by Azure AI Foundry.",
+    description="AI copilot for open-source maintainers powered by Azure AI Foundry.",
     version="1.0.0",
 )
 
 FastAPIInstrumentor.instrument_app(app)
 
-# Mount static files (Web Chat UI)
+# Static file serving
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-# ─────────────────────────────────────────────────────────
-# Request / Response Models
-# ─────────────────────────────────────────────────────────
+# Request and Response schemas
 
 class ChatRequest(BaseModel):
     query: str
-    conversation_id: str | None = None   # Pass back the same ID for multi-turn
+    conversation_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -53,16 +48,14 @@ class ChatResponse(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    repo: str | None = None   # Defaults to DEFAULT_REPO in settings if omitted
+    repo: str | None = None
 
 
-# ─────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────
+# Endpoints
 
 @app.get("/", include_in_schema=False)
 async def serve_ui():
-    """Serve the Web Chat UI."""
+    """Serves the Web Chat interface."""
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
@@ -71,17 +64,13 @@ async def serve_ui():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint returning service status."""
     return {"status": "ok", "service": "DevPulse Maintainer Copilot"}
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """
-    Main chat endpoint.
-    Accepts a user query and optional conversation_id for multi-turn conversations.
-    Returns the 3-part structured response after critic validation.
-    """
+    """Processes maintainer queries through the multi-agent pipeline and returns validated diagnoses."""
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
@@ -104,10 +93,7 @@ async def chat(req: ChatRequest):
 
 @app.post("/ingest")
 async def ingest(req: IngestRequest, background_tasks: BackgroundTasks):
-    """
-    Trigger codebase re-indexing in the background.
-    Optionally pass a custom repo (defaults to DEFAULT_REPO in settings).
-    """
+    """Triggers background ingestion and AST indexing for the specified repository."""
     from config.settings import DEFAULT_REPO
     target_repo = req.repo or DEFAULT_REPO
 
@@ -125,10 +111,6 @@ async def ingest(req: IngestRequest, background_tasks: BackgroundTasks):
         "message": f"Ingestion started in background for repo: {target_repo}",
     }
 
-
-# ─────────────────────────────────────────────────────────
-# Entry Point
-# ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

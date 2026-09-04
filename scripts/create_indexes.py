@@ -1,8 +1,6 @@
 """
-Step 1 Setup: Create all 4 Azure AI Search indexes for DevPulse.
-
-Run once:
-    python3 -m scripts.create_indexes
+Azure AI Search Index Setup.
+Creates and configures search indexes for historical issues, AST codebase entries, and pull requests.
 """
 
 import sys
@@ -20,23 +18,13 @@ from config.settings import (
     AZURE_SEARCH_CODE_INDEX, AZURE_SEARCH_PRS_INDEX,
 )
 
-# text-embedding-3-large produces 3072-dimensional vectors by default.
-# NOTE: this must match whatever get_query_embedding() actually returns —
-# its current dry-run fallback returns a 1536-dim mock vector, which will
-# need updating to 3072 in the next step so shapes agree end to end.
 EMBEDDING_DIMENSIONS = 3072
-
 VECTOR_SEARCH_PROFILE_NAME = "devpulse-vector-profile"
 VECTOR_SEARCH_ALGORITHM_NAME = "devpulse-hnsw"
 
 
 def get_vector_search_config() -> VectorSearch:
-    """
-    Defines HOW vector search is performed: the HNSW approximate-nearest-
-    neighbor algorithm, wrapped in a named "profile" that fields reference.
-    HNSW trades a small amount of recall for much faster query time than
-    exhaustive (brute-force) k-NN — the right default for this scale of data.
-    """
+    """Configures HNSW vector search algorithm and profile for embedding fields."""
     return VectorSearch(
         algorithms=[
             HnswAlgorithmConfiguration(name=VECTOR_SEARCH_ALGORITHM_NAME),
@@ -51,6 +39,7 @@ def get_vector_search_config() -> VectorSearch:
 
 
 def get_index_client() -> SearchIndexClient:
+    """Initializes and returns the SearchIndexClient."""
     if not AZURE_SEARCH_KEY:
         print("ERROR: AZURE_SEARCH_KEY is not set in .env")
         sys.exit(1)
@@ -61,8 +50,7 @@ def get_index_client() -> SearchIndexClient:
 
 
 def build_issues_index() -> SearchIndex:
-    """devpulse-issues-index — historical GitHub issues, now with a vector
-    field for semantic similarity search alongside the existing keyword fields."""
+    """Defines the search index schema for historical GitHub issues with vector search."""
     fields = [
         SimpleField(name="id",                 type=SearchFieldDataType.String,  key=True,       filterable=True),
         SimpleField(name="issue_number",        type=SearchFieldDataType.Int32,                   filterable=True, sortable=True),
@@ -75,13 +63,11 @@ def build_issues_index() -> SearchIndex:
         SimpleField(name="created_at",          type=SearchFieldDataType.String,  sortable=True),
         SimpleField(name="closed_at",           type=SearchFieldDataType.String,  sortable=True),
         SearchableField(name="resolution_summary", type=SearchFieldDataType.String, analyzer_name="en.microsoft"),
-        # Vector field: embedding of `content` (title + body), used for
-        # semantic similarity search instead of/alongside keyword matching.
         SearchField(
             name="content_vector",
             type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
             searchable=True,
-            retrievable=True,  # SDK/REST defaults this to False for vector fields (portal wizard defaults True) — we need it back to compute exact cosine similarity ourselves in search_past_history()
+            retrievable=True,
             vector_search_dimensions=EMBEDDING_DIMENSIONS,
             vector_search_profile_name=VECTOR_SEARCH_PROFILE_NAME,
         ),
@@ -95,7 +81,7 @@ def build_issues_index() -> SearchIndex:
 
 
 def build_codebase_index() -> SearchIndex:
-    """devpulse-codebase-index — AST-chunked source code with vector embeddings."""
+    """Defines the search index schema for AST-parsed codebase source code entities."""
     fields = [
         SimpleField(name="id",                 type=SearchFieldDataType.String,  key=True, filterable=True),
         SearchableField(name="file_path",      type=SearchFieldDataType.String,  analyzer_name="keyword"),
@@ -109,7 +95,6 @@ def build_codebase_index() -> SearchIndex:
         SearchableField(name="content",        type=SearchFieldDataType.String,  analyzer_name="en.microsoft"),
         SimpleField(name="language",           type=SearchFieldDataType.String,  filterable=True),
         SimpleField(name="repo",               type=SearchFieldDataType.String,  filterable=True),
-        # 3072-dim vector field for semantic code search
         SearchField(
             name="content_vector",
             type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
@@ -127,10 +112,8 @@ def build_codebase_index() -> SearchIndex:
     )
 
 
-
-
 def build_prs_index() -> SearchIndex:
-    """devpulse-prs-index — historical Pull Requests."""
+    """Defines the search index schema for historical Pull Requests."""
     fields = [
         SimpleField(name="id",            type=SearchFieldDataType.String,  key=True, filterable=True),
         SimpleField(name="pr_number",     type=SearchFieldDataType.Int32,   filterable=True, sortable=True),
@@ -156,26 +139,23 @@ INDEXES = [
 
 
 def main():
-    print("=== DevPulse: Wiping & Recreating Clean Azure AI Search Indexes ===\n")
+    """Initializes and recreates search indexes in Azure AI Search."""
+    print("=== DevPulse: Creating Azure AI Search Indexes ===\n")
     client = get_index_client()
     for label, builder_fn in INDEXES:
         index_def = builder_fn()
         print(f"[{label}] Resetting '{index_def.name}'...")
         try:
-            # 1. Delete old index (clears all old documents & embeddings to 0 MB)
             try:
                 client.delete_index(index_def.name)
                 print(f"  🗑️ Deleted old '{index_def.name}'.")
             except Exception:
-                pass  # Index didn't exist, continue
+                pass
 
-            # 2. Create fresh empty index
             result = client.create_index(index_def)
-            print(f"  ✅ Fresh '{result.name}' created — 0 MB used, {len(result.fields)} fields.\n")
+            print(f"  ✅ Fresh '{result.name}' created ({len(result.fields)} fields).\n")
         except Exception as e:
             print(f"  ❌ Failed: {e}\n")
-    print("=== Done. Next: python3 -m scripts.ingest_history ===")
-
 
 
 if __name__ == "__main__":

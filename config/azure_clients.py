@@ -1,3 +1,8 @@
+"""
+Azure Service Client Factory.
+Provides initialized client instances for Azure OpenAI, Azure AI Foundry, and Azure AI Search.
+"""
+
 from config.settings import (
     AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_KEY,
@@ -9,8 +14,9 @@ from config.settings import (
     AZURE_SEARCH_CODE_INDEX,
 )
 
+
 def get_azure_openai_client():
-    """Initializes and returns Azure OpenAI Client."""
+    """Initializes and returns the Azure OpenAI client."""
     if not AZURE_OPENAI_KEY:
         print("[AzureClients] Warning: AZURE_OPENAI_KEY is not set. Operating in dry-run mode.")
         return None
@@ -27,17 +33,7 @@ def get_azure_openai_client():
 
 
 def get_agent_openai_client():
-    """
-    Initializes the Foundry Agent Service client used for the Responses API
-    (client.responses.create(..., extra_body={"agent_reference": ...})).
-
-    This is NOT the same thing as get_azure_openai_client() above:
-    - It targets the Foundry *project* endpoint, not the AOAI resource endpoint.
-    - It authenticates with Azure AD (DefaultAzureCredential), not an API key.
-    - It requires the agent to already exist in the Foundry portal/project
-      (Agents section) under AZURE_AI_AGENT_NAME.
-    Requires: pip install azure-ai-projects azure-identity
-    """
+    """Initializes and returns the Azure AI Foundry Agent Service client using DefaultAzureCredential."""
     if not AZURE_AI_PROJECT_ENDPOINT:
         print("[AzureClients] Warning: AZURE_AI_PROJECT_ENDPOINT is not set. Operating in dry-run mode.")
         return None
@@ -56,7 +52,7 @@ def get_agent_openai_client():
 
 
 def get_azure_search_client(index_name=None):
-    """Initializes and returns Azure AI Search Client for a specified index."""
+    """Initializes and returns the Azure AI Search client for the specified index."""
     target_index = index_name or AZURE_SEARCH_ISSUES_INDEX
     if not AZURE_SEARCH_KEY:
         print(f"[AzureClients] Warning: AZURE_SEARCH_KEY is not set for '{target_index}'. Operating in dry-run mode.")
@@ -72,7 +68,6 @@ def get_azure_search_client(index_name=None):
     except Exception as e:
         print(f"[AzureClients] Error initializing SearchClient for '{target_index}': {e}")
         return None
-
 
 
 if __name__ == "__main__":
